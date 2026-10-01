@@ -17,8 +17,14 @@ fsPromises
       console.log("callback:", data);
 
       // Callback hell example (test and leave it in comments):
-      // what this is doing is it's pointing to sample files by using path and pulling information from sample-files by using join. __dirname is also helping pointing to the name of the folder because without it it would struggle to find the post.
-
+      /*
+      fs.readFile("callsync", "utf8",(err, data1) =>{
+      fs.readFile("callsync2", "utf8",(err, data2) => {
+        console.log(data1);
+        console.log(data2);
+      });
+     });
+     */
       // 2. Promise style
       fsPromises
         .readFile(myPath, "utf8")
