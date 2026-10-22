@@ -1,9 +1,5 @@
 const express = require("express");
-const {
-  logon,
-  register,
-  logoff,
-} = require("../week-3-middleware/controllers/userController");
+const { logon, register, logoff } = require("./controllers/userController");
 const router = express.Router();
 
 router.post("/register", register);

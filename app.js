@@ -3,7 +3,7 @@ const express = require("express");
 const userRoutes = require("./routes/userRoutes");
 const notFound = require("./middleware/not-found");
 
-const errorHandler = require("../week-3-middleware/middleware/error-handler");
+const errorHandler = require("./middleware/error-handler");
 
 const app = express();
 global.user_id = null;
