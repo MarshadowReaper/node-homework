@@ -5,7 +5,7 @@ const notFound = require("./middleware/not-found");
 const authMiddleware = require("./middleware/auth");
 const taskRouter = require("./routes/taskRoutes");
 const errorHandler = require("./middleware/error-handler");
-const pool = require("./db/pg-pool");
+
 const prisma = require("./db/prisma");
 const app = express();
 global.user_id = null;
@@ -13,11 +13,13 @@ global.user_id = null;
 app.use(express.json());
 app.get("/health", async (req, res) => {
   try {
-    await pool.query("SELECT 1");
+    await prisma.$queryRaw`SELECT 1`;
     res.json({ status: "ok", db: "connected" });
   } catch (err) {
     res.status(500).json({
-      message: `db not connected, error: ${err.message}`,
+      status: "error",
+      db: "not connected",
+      error: err.message,
     });
   }
 });
