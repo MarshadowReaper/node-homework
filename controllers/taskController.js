@@ -1,6 +1,5 @@
 const { taskSchema, patchTaskSchema } = require("../validation/taskSchema");
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../db/prisma");
 
 async function create(req, res, next) {
   if (!req.body) req.body = {};
@@ -20,12 +19,14 @@ async function create(req, res, next) {
       data: {
         title: value.title,
         isCompleted: value.isCompleted,
+        priority: value.priority,
         userId: global.user_id,
       },
       select: {
         id: true,
         title: true,
         isCompleted: true,
+        priority: true,
       },
     });
 
@@ -36,25 +37,76 @@ async function create(req, res, next) {
 }
 
 async function index(req, res, next) {
+  const whereClause = { userId: global.user_id };
+
+  if (req.query.find) {
+    whereClause.title = {
+      contains: req.query.find, // Matches %find% pattern
+      mode: "insensitive", // Case-insensitive search (ILIKE in PostgreSQL)
+    };
+  }
+  const getOrderBy = (query) => {
+    const validSortFields = [
+      "title",
+      "priority",
+      "createdAt",
+      "id",
+      "isCompleted",
+    ];
+    const sortBy = query.sortBy || "createdAt";
+    const sortDirection = query.sortDirection === "asc" ? "asc" : "desc";
+
+    if (validSortFields.includes(sortBy)) {
+      return { [sortBy]: sortDirection };
+    }
+    return { createdAt: "desc" }; // default fallback
+  };
   try {
+    // Parse pagination parameters
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    // Get tasks with pagination and eager loading
     const tasks = await prisma.task.findMany({
-      where: {
-        userId: global.user_id,
-      },
+      where: whereClause,
       select: {
+        id: true,
         title: true,
         isCompleted: true,
-        id: true,
+        priority: true,
+        createdAt: true,
+        User: {
+          select: {
+            name: true,
+            email: true,
+          },
+        },
       },
+      skip: skip,
+      take: limit,
+      orderBy: getOrderBy(req.query),
     });
 
-    if (tasks.length === 0) {
-      return res.status(404).json({
-        message: "No tasks found.",
-      });
-    }
+    // Get total count for pagination metadata
+    const totalTasks = await prisma.task.count({
+      where: whereClause,
+    });
 
-    return res.status(200).json(tasks);
+    const pagination = {
+      page,
+      limit,
+      total: totalTasks,
+      pages: Math.ceil(totalTasks / limit),
+      hasNext: page * limit < totalTasks,
+      hasPrev: page > 1,
+    };
+
+    // Return tasks with pagination information
+    res.status(200).json({
+      tasks,
+      pagination,
+    });
   } catch (err) {
     return next(err);
   }
@@ -79,6 +131,13 @@ async function show(req, res, next) {
         id: true,
         title: true,
         isCompleted: true,
+        priority: true,
+        User: {
+          select: {
+            name: true,
+            email: true,
+          },
+        },
       },
     });
 
@@ -105,41 +164,38 @@ async function update(req, res, next) {
     });
   }
 
-  const id = parseInt(req.params.id);
-
   try {
     const task = await prisma.task.update({
-      data: value,
       where: {
-        id,
+        id: parseInt(req.params.id),
         userId: global.user_id,
       },
+      data: value,
       select: {
         title: true,
         isCompleted: true,
         id: true,
+        priority: true,
       },
     });
 
-    return res.status(200).json(task);
+    return res.json(task);
   } catch (err) {
     if (err.code === "P2025") {
       return res.status(404).json({
         message: "The task was not found.",
       });
-    } else {
-      return next(err);
     }
+
+    return next(err);
   }
 }
 
 async function deleteTask(req, res, next) {
-  const id = parseInt(req.params.id);
-
   try {
     await prisma.task.delete({
       where: {
-        id,
+        id: parseInt(req.params.id),
         userId: global.user_id,
       },
     });
@@ -150,11 +206,56 @@ async function deleteTask(req, res, next) {
   } catch (err) {
     if (err.code === "P2025") {
       return res.status(404).json({
-        message: "Task not found.",
+        message: "The task was not found.",
       });
-    } else {
-      return next(err);
     }
+
+    return next(err);
+  }
+}
+
+async function bulkCreate(req, res, next) {
+  const { tasks } = req.body || {};
+
+  // Validate the tasks array
+  if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
+    return res.status(400).json({
+      error: "Invalid request data. Expected an array of tasks.",
+    });
+  }
+
+  // Validate all tasks before insertion
+  const validTasks = [];
+  for (const task of tasks) {
+    const { error, value } = taskSchema.validate(task);
+    if (error) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: error.details,
+      });
+    }
+    validTasks.push({
+      title: value.title,
+      isCompleted: value.isCompleted || false,
+      priority: value.priority || "medium",
+      userId: global.user_id,
+    });
+  }
+
+  // Use createMany for batch insertion
+  try {
+    const result = await prisma.task.createMany({
+      data: validTasks,
+      skipDuplicates: false,
+    });
+
+    res.status(201).json({
+      message: "Bulk task creation successful",
+      tasksCreated: result.count,
+      totalRequested: validTasks.length,
+    });
+  } catch (err) {
+    return next(err);
   }
 }
 
@@ -164,4 +265,5 @@ module.exports = {
   show,
   update,
   deleteTask,
+  bulkCreate,
 };

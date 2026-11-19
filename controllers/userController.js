@@ -2,8 +2,7 @@ const crypto = require("crypto");
 const util = require("util");
 const scrypt = util.promisify(crypto.scrypt);
 const { userSchema } = require("../validation/userSchema");
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../db/prisma");
 async function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString("hex");
   const derivedKey = await scrypt(password, salt, 64);
@@ -40,37 +39,69 @@ async function register(req, res, next) {
 
   const hashedPassword = await hashPassword(value.password);
 
-  let newUser = null;
-
   try {
-    newUser = await prisma.user.create({
-      data: {
-        name: value.name,
-        email: value.email,
-        hashedPassword,
-      },
-      select: {
-        name: true,
-        email: true,
-        id: true,
-      },
-    });
-  } catch (err) {
-    if (err.name === "PrismaClientKnownRequestError" && err.code === "P2002") {
-      return res.status(400).json({
-        message: "User already exists.",
+    const result = await prisma.$transaction(async (tx) => {
+      // Create user account (similar to Assignment 6, but using tx instead of prisma)
+      const newUser = await tx.user.create({
+        data: {
+          email: value.email,
+          name: value.name,
+          hashedPassword,
+        },
+        select: { id: true, email: true, name: true },
       });
-    } else {
-      return next(err);
+
+      const welcomeTaskData = [
+        {
+          title: "Complete your profile",
+          userId: newUser.id,
+          priority: "medium",
+        },
+        { title: "Add your first task", userId: newUser.id, priority: "high" },
+        { title: "Explore the app", userId: newUser.id, priority: "low" },
+      ];
+      await tx.task.createMany({ data: welcomeTaskData });
+
+      // Fetch the created tasks to return them
+      const welcomeTasks = await tx.task.findMany({
+        where: {
+          userId: newUser.id,
+          title: { in: welcomeTaskData.map((t) => t.title) },
+        },
+        select: {
+          id: true,
+          title: true,
+          isCompleted: true,
+          userId: true,
+          priority: true,
+        },
+      });
+
+      return { user: newUser, welcomeTasks };
+    });
+
+    // Store the user ID globally for session management (not secure for production)
+    global.user_id = result.user.id;
+
+    // Send response with status 201
+    res.status(201);
+    res.json({
+      user: result.user,
+      welcomeTasks: result.welcomeTasks,
+      transactionStatus: "success",
+    });
+    return;
+  } catch (err) {
+    console.error("Register transaction failed:", err);
+
+    if (err.code === "P2002") {
+      return res.status(400).json({
+        error: "Email already registered",
+      });
     }
+
+    return next(err);
   }
-
-  global.user_id = newUser.id;
-
-  return res.status(201).json({
-    name: newUser.name,
-    email: newUser.email,
-  });
 }
 
 async function logon(req, res, next) {
@@ -87,6 +118,13 @@ async function logon(req, res, next) {
 
     const foundUser = await prisma.user.findUnique({
       where: { email: normalizedEmail },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        createdAt: true,
+        hashedPassword: true,
+      },
     });
 
     if (!foundUser) {
