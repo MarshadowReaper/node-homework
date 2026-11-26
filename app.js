@@ -2,6 +2,7 @@ const express = require("express");
 const helmet = require("helmet");
 const rateLimiter = require("express-rate-limit");
 const cookieParser = require("cookie-parser");
+const { xss } = require("express-xss-sanitizer");
 const userRoutes = require("./routes/userRoutes");
 const notFound = require("./middleware/not-found");
 const jwtMiddleware = require("./middleware/jwtMiddleware");
@@ -22,6 +23,7 @@ app.use(helmet());
 
 app.use(express.json());
 app.use(cookieParser());
+app.use(xss());
 app.get("/health", async (req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
